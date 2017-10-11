@@ -18,6 +18,9 @@ module Datadog
         end
 
         def self.sql(_name, start, finish, _id, payload)
+          return unless ::ActiveRecord::Base.connection_handler.active_connections?
+          Datadog::Tracer.log.info('ActiveRecord connection not present')
+          Datadog::Tracer.log.debug(payload.inspect)
           tracer = Datadog.configuration[:rails][:tracer]
           database_service = Datadog.configuration[:rails][:database_service]
           adapter_name = Datadog::Contrib::Rails::Utils.adapter_name
