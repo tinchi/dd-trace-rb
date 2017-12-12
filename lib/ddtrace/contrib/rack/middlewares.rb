@@ -1,6 +1,7 @@
 require 'ddtrace/ext/app_types'
 require 'ddtrace/ext/http'
 require 'ddtrace/propagation/http_propagator'
+require 'ddtrace/contrib/rack/request_queue'
 
 module Datadog
   module Contrib
@@ -22,24 +23,47 @@ module Datadog
           value
         end
         option :distributed_tracing, default: false
+        option :request_queuing, default: false
+        option :web_service_name, default: 'web-server', depends_on: [:tracer, :request_queuing] do |value|
+          if get_option(:request_queuing)
+            get_option(:tracer).set_service_info(value, 'webserver', Ext::AppTypes::WEB)
+          end
+          value
+        end
 
         def initialize(app)
           @app = app
         end
 
+        def compute_queueing_time(env, tracer)
+          return unless Datadog.configuration[:rack][:request_queuing]
+
+          # parse the request enqueue time
+          request_start = Datadog::Contrib::Rack::QueueTime.get_request_start(env)
+          return if request_start.nil?
+
+          tracer.trace(
+            'request.enqueuing',
+            start_time: request_start,
+            service: Datadog.configuration[:rack][:web_service_name]
+          )
+        end
+
         def call(env)
           # retrieve integration settings
           tracer = Datadog.configuration[:rack][:tracer]
-          service = Datadog.configuration[:rack][:service_name]
-          distributed_tracing = Datadog.configuration[:rack][:distributed_tracing]
+
+          # [experimental] create a root Span to keep track of frontend web servers
+          # (i.e. Apache, nginx) if the header is properly set
+          frontend_span = compute_queueing_time(env, tracer)
 
           trace_options = {
-            service: service,
+            service: Datadog.configuration[:rack][:service_name],
             resource: nil,
             span_type: Datadog::Ext::HTTP::TYPE
           }
 
-          if distributed_tracing
+          if Datadog.configuration[:rack][:distributed_tracing]
             context = HTTPPropagator.extract(env)
             tracer.provider.context = context if context.trace_id
           end
@@ -99,6 +123,7 @@ module Datadog
           # ensure the request_span is finished and the context reset;
           # this assumes that the Rack middleware creates a root span
           request_span.finish
+          frontend_span.finish unless frontend_span.nil?
 
           # TODO: Remove this once we change how context propagation works. This
           # ensures we clean thread-local variables on each HTTP request avoiding
