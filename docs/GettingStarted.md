@@ -38,6 +38,10 @@ provides auto instrumentation for the following web frameworks and libraries:
 * [Dalli](#Dalli)
 * [Redis](#Redis)
 
+We also provide instrumentation for frontend web server or load balancer:
+
+* [Request Queue](#Request_Queue)
+
 ## Web Frameworks
 
 ### Ruby on Rails
@@ -512,6 +516,32 @@ The `sucker_punch` integration traces all scheduled jobs:
     # to change SuckerPunch service name, use the Pin class
     pin = Datadog::Pin.get_from(::SuckerPunch)
     pin.service = 'deploy-queues'
+
+## Frontend web servers
+
+### Request Queue
+
+It's possible to compute the Request Queue time spent in your frontend web server or load balancer before
+requests reach your Ruby application. This functionality is **experimental** and is only available if you're
+using the Rack integration. To activate the feature, you must add a ``X-Request-Start`` header from your
+web server (i.e. nginx). The following is an nginx configuration example:
+
+    # /etc/nginx/conf.d/ruby_service.conf
+    server {
+        listen 8080;
+
+        location / {
+          proxy_set_header X-Request-Start "t=${msec}";
+          proxy_pass http://web:3000;
+        }
+    }
+
+Then you need to configure your Rack integration as follows:
+
+    Datadog.configure do |c|
+      # web_service_name defaults to `web-server` and is different from Rack `service_name`
+      c.use :rack, request_queuing: true, web_service_name: nginx
+    end
 
 ## Advanced usage
 
