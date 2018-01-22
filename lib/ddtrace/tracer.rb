@@ -18,8 +18,16 @@ module Datadog
   # of these function calls and sub-requests would be encapsulated within a single trace.
   # rubocop:disable Metrics/ClassLength
   class Tracer
+    module Mode
+      ALL = [
+        ENABLED = :enabled
+        COLLECTION_ONLY = :collection_only
+        DISABLED = :disabled
+      ].freeze
+    end
+
     attr_reader :sampler, :services, :tags, :provider
-    attr_accessor :enabled, :writer
+    attr_accessor :enabled, :mode, :writer
     attr_writer :default_service
 
     # Global, memoized, lazy initialized instance of a logger that is used within the the Datadog
@@ -70,7 +78,7 @@ module Datadog
     #   tracer.shutdown!
     #
     def shutdown!
-      return if !@enabled || @writer.worker.nil?
+      return if @mode != Mode::ENABLED || @writer.worker.nil?
       @writer.worker.stop
     end
 
@@ -91,6 +99,20 @@ module Datadog
     #   by default.
     def initialize(options = {})
       @enabled = options.fetch(:enabled, true)
+
+      # If explicit value is given, use that.
+      # Otherwise, derive an equivalent from `enabled`.
+      mode = options.fetch(:mode, nil)
+      @mode = if mode
+        mode
+      elsif !@enabled
+        # Backwards compatibility equivalent to `enabled: false`
+        Mode::COLLECTION_ONLY
+      else
+        # Default value
+        Mode::ENABLED
+      end
+      
       @writer = options.fetch(:writer, Datadog::Writer.new)
       @sampler = options.fetch(:sampler, Datadog::AllSampler.new)
 
@@ -115,6 +137,7 @@ module Datadog
     #
     def configure(options = {})
       enabled = options.fetch(:enabled, nil)
+      mode = options.fetch(:mode, nil)
       hostname = options.fetch(:hostname, nil)
       port = options.fetch(:port, nil)
       sampler = options.fetch(:sampler, nil)
@@ -122,6 +145,22 @@ module Datadog
 
       @enabled = enabled unless enabled.nil?
       @sampler = sampler unless sampler.nil?
+
+      # If explicit value is given, use that.
+      # Otherwise, derive an equivalent from `enabled`.
+      @mode = if !mode.nil?
+        mode
+      elsif !enabled.nil?
+        if !enabled
+          # Backwards compatibility equivalent to `enabled: false`
+          Mode::COLLECTION_ONLY
+        else
+          # Default value
+          Mode::ENABLED
+        end
+      else
+        @mode
+      end
 
       if priority_sampling
         @sampler = PrioritySampler.new(base_sampler: @sampler)
@@ -307,10 +346,10 @@ module Datadog
     # Send the trace to the writer to enqueue the spans list in the agent
     # sending queue.
     def write(trace)
-      return if @writer.nil? || !@enabled
+      return if @writer.nil? || @mode != Mode::ENABLED
 
       if Datadog::Tracer.debug_logging
-        Datadog::Tracer.log.debug("Writing #{trace.length} spans (enabled: #{@enabled})")
+        Datadog::Tracer.log.debug("Writing #{trace.length} spans (mode: #{@mode})")
         str = String.new('')
         PP.pp(trace, str)
         Datadog::Tracer.log.debug(str)
