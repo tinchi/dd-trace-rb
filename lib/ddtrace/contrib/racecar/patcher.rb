@@ -18,10 +18,7 @@ module Datadog
             return patched? if patched? || !compatible?
 
             tracer = configuration[:tracer]
-
-            Contrib::ActiveSupport::Notifications.subscribe('process_message.racecar', NAME_MESSAGE, {}, tracer, &method(:process))
-            Contrib::ActiveSupport::Notifications.subscribe('process_batch.racecar', NAME_BATCH, {}, tracer, &method(:process))
-
+            subscribe!
             tracer.set_service_info(
               configuration[:service_name],
               'racecar',
@@ -31,12 +28,33 @@ module Datadog
             @patched = true
           end
 
-          def patched?
-            return @patched if defined?(@patched)
-            @patched = false
+          def subscribe!
+            return @subscribed if @subscribed
+            subscribers.each do |pattern, subscriber|
+              Contrib::ActiveSupport::Notifications.subscribe(pattern, subscriber)
+            end
+            @subscribed = true
           end
 
-          def unpatch
+          def subscribers
+            @subscribers ||= {
+              'process_message.racecar' => Contrib::ActiveSupport::Notifications.subscriber(
+                self::NAME_MESSAGE,
+                {},
+                configuration[:tracer],
+                &method(:process)
+              ),
+              'process_batch.racecar' => Contrib::ActiveSupport::Notifications.subscriber(
+                self::NAME_BATCH,
+                {},
+                configuration[:tracer],
+                &method(:process)
+              )
+            }
+          end
+
+          def patched?
+            return @patched if defined?(@patched)
             @patched = false
           end
 
