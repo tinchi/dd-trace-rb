@@ -24,15 +24,16 @@ RSpec.describe Datadog::Writer do
 
           context 'and default transport options' do
             it do
-              sampling_method = described_class.new.method(:sampling_updater)
               expect(Datadog::HTTPTransport).to receive(:new) do |hostname, port, options|
                 expect(hostname).to eq(described_class::HOSTNAME)
                 expect(port).to eq(described_class::PORT)
                 expect(options).to be_a_kind_of(Hash)
                 expect(options[:api_version]).to eq(Datadog::HTTPTransport::V4)
-                expect(options[:response_callback].source_location).to eq(sampling_method.source_location)
               end
-              expect(writer.instance_variable_get(:@priority_sampler)).to be(sampler)
+
+              expect(writer.priority_sampler).to be(sampler)
+              sampling_method = described_class.instance_method(:sampling_updater)
+              expect(writer.instance_variable_get(:@response_callback).source_location).to eq(sampling_method.source_location)
             end
           end
 
@@ -52,6 +53,7 @@ RSpec.describe Datadog::Writer do
                 )
               end
               expect(writer.priority_sampler).to be(sampler)
+              expect(writer.instance_variable_get(:@response_callback)).to be(response_callback)
             end
           end
         end
@@ -67,7 +69,8 @@ RSpec.describe Datadog::Writer do
 
           context 'when the transport uses' do
             let(:options) { super().merge!(transport_options: { api_version: api_version, response_callback: callback }) }
-            let(:callback) { double('callback method') }
+            let(:callback) { s = spy; Proc.new { |*args| s.call(*args) } }
+            let(:spy) { double('callback spy') }
             
             let!(:request) { stub_request(:post, endpoint).to_return(response) }
             let(:endpoint) { "#{Datadog::Writer::HOSTNAME}:#{Datadog::Writer::PORT}/#{api_version}/traces" }
@@ -77,7 +80,7 @@ RSpec.describe Datadog::Writer do
             shared_examples_for 'an API version' do
               context 'that succeeds' do
                 before(:each) do
-                  expect(callback).to receive(:call).with(a_kind_of(Net::HTTPOK), a_kind_of(Hash)) do |response, api|
+                  expect(spy).to receive(:call).with(a_kind_of(Net::HTTPOK), a_kind_of(Hash)) do |response, api|
                     expect(api[:version]).to eq(api_version)
                   end
                 end
@@ -96,7 +99,7 @@ RSpec.describe Datadog::Writer do
 
                 before(:each) do
                   call_count = 0
-                  allow(callback).to receive(:call).with(a_kind_of(Net::HTTPResponse), a_kind_of(Hash)) do |response, api|
+                  allow(spy).to receive(:call).with(a_kind_of(Net::HTTPResponse), a_kind_of(Hash)) do |response, api|
                     call_count += 1
                     if call_count == 1
                       expect(response).to be_a_kind_of(Net::HTTPNotFound)

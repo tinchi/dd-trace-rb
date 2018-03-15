@@ -19,8 +19,8 @@ module Datadog
       # priority sampling
       if options[:priority_sampler]
         @priority_sampler = options[:priority_sampler]
+        @response_callback = transport_options[:response_callback] || method(:sampling_updater)
         transport_options[:api_version] ||= HTTPTransport::V4
-        transport_options[:response_callback] ||= method(:sampling_updater)
       end
 
       # transport and buffers
@@ -66,7 +66,7 @@ module Datadog
     def send_spans(traces, transport)
       return true if traces.empty?
 
-      code = transport.send(:traces, traces)
+      code = transport.send(:traces, traces, &@response_callback)
       status = !transport.server_error?(code)
       @traces_flushed += traces.length if status
 
@@ -127,6 +127,8 @@ module Datadog
       else
         false
       end
+    rescue => e
+      Tracer.log.debug("Error processing callback: #{e}")
     end
   end
 end
